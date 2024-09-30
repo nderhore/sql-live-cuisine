@@ -1,7 +1,8 @@
-DROP TABLE Ingredient_Recette;
-DROP TABLE Commande_Recette;
-DROP TABLE Ingredient;
-DROP TABLE Recette;
+DROP TABLE IF EXISTS Ingredient_Recette;
+DROP TABLE IF EXISTS Commande_Recette;
+DROP TABLE IF EXISTS Ingredient;
+DROP TABLE IF EXISTS Recette;
+DROP TABLE IF EXISTS Stock;
 
 #### 1. Creation des tables
 CREATE TABLE IF NOT EXISTS Ingredient(
@@ -40,6 +41,13 @@ CREATE TABLE IF NOT EXISTS Commande_Recette(
     FOREIGN KEY (commande_id) REFERENCES Commande(commande_id),
     PRIMARY KEY (recette_id,commande_id)
 );
+
+CREATE TABLE IF NOT EXISTS Stock(
+    ingredient_id INT PRIMARY KEY,
+    quantite_disponible FLOAT,
+    FOREIGN KEY (ingredient_id) REFERENCES Ingredient(ingredient_id)
+);
+
 
 -- Insérer des données dans la table Ingredient
 INSERT INTO Ingredient (quantite, nom) VALUES
@@ -150,7 +158,7 @@ group by r.recette_id;
 
 # Total des ventes par recette
 # nom de la recette , total des ventes ( euros)
-SELECT r.nom, SUM(cr.quantite * r.prix) AS 'nb_prix_total'
+EXPLAIN SELECT r.nom, SUM(cr.quantite * r.prix) AS 'nb_prix_total'
 FROM Commande_Recette cr
 INNER JOIN Recette r ON cr.recette_id = r.recette_id
 group by r.recette_id;
@@ -162,4 +170,59 @@ UPDATE Recette SET prix=prix*1.1;
 
 # je veux le prix moyen des recettes
 SELECT AVG(prix) AS 'prix moyen des recettes'
-FROM Recette
+FROM Recette;
+
+# je veux les recettes dont le prix est supérieur à 5 euros
+EXPLAIN SELECT * FROM Recette WHERE prix > 5;
+
+# Index
+CREATE INDEX idx_prix ON Recette(prix);
+
+
+# Transaction : tout ou rien
+
+## Un client souhaite commander 2 unités de Gateau au chocolat et 1 unité de Pain
+    # => Pour chaque ingrédients nécessaire aux recettes commandées, déduire la quantité du stock
+
+SELECT * FROM Commande;
+
+BEGIN;
+DROP TEMPORARY TABLE IF EXISTS tmp_ing_quantite;
+
+#1. Insertion de la commande et récupération de mon ID
+INSERT INTO Commande(date_commande) VALUES (NOW());
+SET @commande_id = LAST_INSERT_ID();
+
+#2. Inserer les recettes commandées
+INSERT INTO Commande_Recette(commande_id,recette_id,quantite) VALUES
+                                                                  (@commande_id,3,2), -- 2 Gateaux au chocolat
+                                                                  (@commande_id,2,1); -- 1 Pain
+#3. Calcul des ingrédients necessaire
+CREATE TEMPORARY TABLE tmp_ing_quantite AS
+SELECT ir.ingredient_id, SUM(ir.quantite * CR.quantite) AS quantite_necessaire
+FROM Ingredient_Recette ir
+JOIN Commande_Recette CR
+WHERE commande_id = @commande_id
+GROUP BY ir.ingredient_id;
+
+#4. Verification du stock : rechercher les ingrédients dont le stock est insuffisant
+SELECT tiq.ingredient_id
+FROM tmp_ing_quantite tiq
+JOIN Stock s ON s.ingredient_id = tiq.ingredient_id
+WHERE s.quantite_disponible >= tiq.quantite_necessaire;
+
+COMMIT;
+
+SELECT * FROM Commande;
+
+CREATE VIEW view_recette AS SELECT * FROM Recette;
+SELECT * FROM view_recette;
+UPDATE view_recette SET prix = prix+1;
+SELECT * FROM view_recette;
+
+UPDATE Recette SET prix = prix+1;
+SELECT * FROM Recette;
+
+
+
+
